@@ -57,21 +57,32 @@ async def help_command(client, message: Message):
     await message.reply_text("Send any JioSaavn song name or URL to get the audio stream/download link.")
 
 @app.on_message(filters.text & non_command_filter)
-async def handle_message(client, message: Message):
-    query = message.text.strip()
-    msg = await message.reply_text("🔍 Searching...")
+async def handle_text(client: Client, message: Message):
+    text = message.text.strip()
+    status_msg = await message.reply_text("🔍 Searching JioSaavn...")
 
-    data = await search_song_and_get_stream(query)
-    if not data:
-        await msg.edit_text("❌ Song not found.")
+    if "jiosaavn.com" in text:
+        # Direct JioSaavn link
+        await process_and_send(message.chat.id, text, status_msg)
         return
 
-    reply = (
-        f"🎵 *{data['title']}*\n"
-        f"👤 {data['artist']}\n"
-        f"🔗 [Stream/Download]({data['media_url']})"
-    )
-    await msg.edit_text(reply, disable_web_page_preview=True)
+    # Search by query
+    results = await search_songs(text)
+    if not results:
+        await status_msg.edit_text("❌ No results found!")
+        return
+
+    song = results[0]
+    song_title = song.get("name", "Unknown Title")
+    artist = song.get("primaryArtists", "Unknown")
+    download_url = song.get("downloadUrl") or song.get("permaUrl")
+
+    if not download_url:
+        await status_msg.edit_text("❌ No download URL found!")
+        return
+
+    reply_text = f"🎵 {song_title}\n👤 {artist}\n🔗 {download_url}"
+    await status_msg.edit_text(reply_text, disable_web_page_preview=True)
 
 if __name__ == "__main__":
     print("Bot is running...")
