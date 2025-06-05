@@ -18,14 +18,27 @@ def get_direct_audio_link(url):
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        # Try to find best audio-only format URL
         for f in info.get('formats', []):
             if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
                 return f.get('url'), info.get('title')
-        # fallback to general url
         return info.get('url'), info.get('title')
 
-@app.on_message(filters.text & ~filters.command)
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "Send me a YouTube or JioSaavn URL, and I will provide you the direct audio download link without downloading the file!"
+    )
+
+@app.on_message(filters.command("help"))
+async def help_command(client, message):
+    await message.reply_text(
+        "Usage:\n"
+        "1. Send a direct YouTube or JioSaavn URL\n"
+        "2. I will reply with the best audio stream URL that you can open or download."
+    )
+
+# Filter: text messages that are NOT commands "start" or "help"
+@app.on_message(filters.text & ~filters.command(commands=["start", "help"]))
 async def handle_message(client, message: Message):
     url_or_query = message.text.strip()
     status = await message.reply_text("Generating direct download link...")
@@ -44,21 +57,6 @@ async def handle_message(client, message: Message):
         await status.edit_text(f"🎵 *{title_or_error}*\n\nHere is your direct audio download link:\n{direct_url}", parse_mode="markdown")
     else:
         await status.edit_text(f"❌ Error: {title_or_error}")
-
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text(
-        "Send me a JioSaavn or YouTube URL (or search query) and I will give you the direct audio download link without downloading!"
-    )
-
-@app.on_message(filters.command("help"))
-async def help_cmd(client, message):
-    await message.reply_text(
-        "Usage:\n"
-        "1. Send a direct JioSaavn or YouTube URL\n"
-        "2. Or send a search query (works mostly for YouTube)\n"
-        "I will reply with the best audio stream direct URL you can open or download."
-    )
 
 if __name__ == "__main__":
     print("Bot started...")
