@@ -29,9 +29,13 @@ async def search_songs(query):
                 if data.get('success') and data['data'].get('results'):
                     results = data['data']['results']
                     for r in results:
+                        # Safe check for nested structure
                         if 'downloadUrl' in r and isinstance(r['downloadUrl'], list):
-                            r['downloadUrl'] = r['downloadUrl'][-1]['link']
-                    return results
+                            for option in reversed(r['downloadUrl']):
+                                if isinstance(option, dict) and 'link' in option:
+                                    r['downloadUrl'] = option['link']
+                                    return results
+                    return None
         except Exception as e:
             print(f"Search error: {e}")
     return None
