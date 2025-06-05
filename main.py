@@ -70,10 +70,10 @@ def search_spotify_track(query):
         print(f"Spotify search error: {e}")
         return None
 
-# Search YouTube video URL for a given query
-async def search_youtube(query):
+# Synchronous YouTube search (to run in executor)
+def search_youtube(query):
     videos_search = VideosSearch(query, limit=1)
-    result = await videos_search.next()
+    result = videos_search.result()
     if result and result.get('result'):
         return result['result'][0]['link']
     return None
@@ -134,21 +134,22 @@ async def handle_text(client, message: Message):
         return
 
     if "spotify.com" in text:
-        # Extract track ID from URL
         try:
             track_id = text.split("track/")[1].split("?")[0]
             track_info = spotify.track(track_id)
             query = f"{track_info['name']} {' '.join([a['name'] for a in track_info['artists']])}"
-        except Exception as e:
+        except Exception:
             await status_msg.edit_text("❌ Invalid Spotify track URL.")
             return
     else:
-        # Try Spotify search first
         query = search_spotify_track(text)
         if query is None:
             query = text
 
-    yt_url = await search_youtube(query)
+    # Run blocking YouTube search in executor
+    loop = asyncio.get_event_loop()
+    yt_url = await loop.run_in_executor(None, search_youtube, query)
+
     if not yt_url:
         await status_msg.edit_text("❌ No matching YouTube video found.")
         return
