@@ -109,7 +109,7 @@ async def help_command(client: Client, message: Message):
         "Example search: Let Me Love You"
     )
 
-@app.on_message(filters.text & ~filters.command)
+@app.on_message(filters.text & ~filters.command())
 async def handle_text(client: Client, message: Message):
     text = message.text.strip()
     status_msg = await message.reply_text("Processing your request...")
