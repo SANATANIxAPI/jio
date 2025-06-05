@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiohttp
 import asyncio
 import uuid
@@ -11,17 +11,11 @@ BOT_TOKEN = "7512249863:AAF5XnrPikoQSr4546P0_6pf7wZR822MICg"
 app = Client("jiosaavn_only_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 SAAVN_API = "https://saavn.dev/api/search/songs"
-
 url_map = {}
 
 async def search_songs(query):
-    params = {
-        'query': query,
-        'limit': 5
-    }
-    headers = {
-        'User-Agent': 'Mozilla/5.0'
-    }
+    params = {'query': query, 'limit': 5}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(SAAVN_API, params=params, headers=headers) as resp:
@@ -40,21 +34,21 @@ async def start(client, message):
         "Note: Only JioSaavn is supported."
     )
 
-@app.on_message(filters.text & ~filters.command)
-async def handle_message(client, message: Message):
+@app.on_message(filters.text)
+async def handle_message(client, message):
+    if message.text.startswith("/"):
+        return  # Ignore commands here
+
     text = message.text.strip()
 
-    # Reject YouTube links or other URLs
     if "youtube.com" in text.lower() or "youtu.be" in text.lower():
         await message.reply_text("Sorry, I only support JioSaavn links and song names.")
         return
 
-    # If message is JioSaavn URL
     if "jiosaavn.com" in text.lower():
         await message.reply_text(f"JioSaavn URL received:\n{text}\nYou can open this URL to listen/download.")
         return
 
-    # Otherwise, treat as song name, search Saavn
     results = await search_songs(text)
     if not results:
         await message.reply_text("No songs found on JioSaavn for your query.")
