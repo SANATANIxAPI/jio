@@ -109,7 +109,13 @@ async def help_command(client: Client, message: Message):
         "Example search: Let Me Love You"
     )
 
-@app.on_message(filters.text & ~filters.command())
+# Custom filter to exclude commands (messages starting with '/')
+def is_not_command(_, __, message):
+    return not (message.text and message.text.startswith("/"))
+
+non_command_filter = filters.create(is_not_command)
+
+@app.on_message(filters.text & non_command_filter)
 async def handle_text(client: Client, message: Message):
     text = message.text.strip()
     status_msg = await message.reply_text("Processing your request...")
