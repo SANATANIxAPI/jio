@@ -1,79 +1,139 @@
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message
+import yt_dlp
+import os
 import aiohttp
 import asyncio
-import uuid
+from concurrent.futures import ThreadPoolExecutor
 
+# Telegram Bot credentials
 API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "7512249863:AAF5XnrPikoQSr4546P0_6pf7wZR822MICg"
 
-app = Client("jiosaavn_only_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Initialize the Pyrogram Client
+app = Client("jiosaavn_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# Thread pool for blocking I/O operations
+executor = ThreadPoolExecutor(max_workers=2)
+
+# yt-dlp options for downloading audio
+ydl_opts = {
+    'format': 'bestaudio/best',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'outtmpl': '%(title)s.%(ext)s',
+    'quiet': True,
+    'no_warnings': True,
+    'noplaylist': True,
+    'concurrent_fragment_downloads': 4,
+}
+
+# Saavn.dev API endpoint
 SAAVN_API = "https://saavn.dev/api/search/songs"
-url_map = {}
 
 async def search_songs(query):
-    params = {'query': query, 'limit': 5}
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    """Search songs using saavn.dev API"""
+    params = {
+        'query': query,
+        'limit': 1  # Only need the top result
+    }
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    }
+    
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(SAAVN_API, params=params, headers=headers) as resp:
-                data = await resp.json()
+            async with session.get(SAAVN_API, params=params, headers=headers) as response:
+                data = await response.json()
                 if data.get('success') and data.get('data', {}).get('results'):
                     return data['data']['results']
                 return None
-        except Exception:
+        except Exception as e:
+            print(f"Search error: {e}")
             return None
 
+async def download_song(url):
+    """Download song using yt-dlp in thread executor"""
+    loop = asyncio.get_event_loop()
+    def extract():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=True)
+    info = await loop.run_in_executor(executor, extract)
+    title = info.get('title', 'song')
+    artist = info.get('artist', 'Unknown')
+    duration = int(info.get('duration', 0))
+    return title, artist, duration
+
+async def process_and_send(chat_id, url, status_msg):
+    """Download and send audio file"""
+    try:
+        title, artist, duration = await download_song(url)
+        file_name = f"{title}.mp3"
+
+        if os.path.exists(file_name):
+            await status_msg.edit_text("Uploading audio...")
+            await app.send_audio(
+                chat_id=chat_id,
+                audio=file_name,
+                title=title,
+                performer=artist,
+                duration=duration,
+                disable_notification=True
+            )
+            await status_msg.delete()
+            # Remove file after sending
+            await asyncio.get_event_loop().run_in_executor(executor, os.remove, file_name)
+        else:
+            await status_msg.edit_text("❌ Error: Downloaded file not found!")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
+
 @app.on_message(filters.command("start"))
-async def start(client, message):
+async def start_command(client: Client, message: Message):
     await message.reply_text(
-        "Hi! Send me a JioSaavn URL or a song name.\n"
-        "I will provide you song info and link.\n"
-        "Note: Only JioSaavn is supported."
+        "Hello! Send me a JioSaavn URL or a song name, and I'll download and send the song directly."
     )
 
-@app.on_message(filters.text)
-async def handle_message(client, message):
-    if message.text.startswith("/"):
-        return  # Ignore commands here
+@app.on_message(filters.command("help"))
+async def help_command(client: Client, message: Message):
+    await message.reply_text(
+        "Usage:\n"
+        "1. Send a JioSaavn URL directly\n"
+        "2. Or send a song name, I'll search and download the first result\n\n"
+        "Example URL: https://www.jiosaavn.com/song/let-me-love-you/KD8zfRtiYms\n"
+        "Example search: Let Me Love You"
+    )
 
+# Custom filter to exclude commands (messages starting with '/')
+def is_not_command(_, __, message):
+    return not (message.text and message.text.startswith("/"))
+
+non_command_filter = filters.create(is_not_command)
+
+@app.on_message(filters.text & non_command_filter)
+async def handle_text(client: Client, message: Message):
     text = message.text.strip()
+    status_msg = await message.reply_text("Processing your request...")
 
-    if "youtube.com" in text.lower() or "youtu.be" in text.lower():
-        await message.reply_text("Sorry, I only support JioSaavn links and song names.")
+    if "jiosaavn.com" in text:
+        # Direct URL given, download & send
+        await process_and_send(message.chat.id, text, status_msg)
         return
 
-    if "jiosaavn.com" in text.lower():
-        await message.reply_text(f"JioSaavn URL received:\n{text}\nYou can open this URL to listen/download.")
-        return
-
+    # Treat input as song name, search and download first result
     results = await search_songs(text)
     if not results:
-        await message.reply_text("No songs found on JioSaavn for your query.")
+        await status_msg.edit_text("No results found for your query!")
         return
 
-    keyboard = []
-    for song in results:
-        short_id = str(uuid.uuid4())[:8]
-        url_map[short_id] = song['url']
-        keyboard.append([InlineKeyboardButton(f"{song['name']} - {song.get('primaryArtists', 'Unknown')}", callback_data=f"dl:{short_id}")])
-
-    await message.reply_text("Select a song:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-@app.on_callback_query(filters.regex(r"^dl:"))
-async def callback_handler(client, cq):
-    short_id = cq.data.split("dl:")[1]
-    url = url_map.get(short_id)
-    if not url:
-        await cq.answer("Song URL not found!", show_alert=True)
-        return
-
-    await cq.answer()
-    await cq.message.edit(f"Here is your JioSaavn song link:\n{url}")
-    url_map.pop(short_id, None)
+    first_song_url = results[0]['url']
+    await process_and_send(message.chat.id, first_song_url, status_msg)
 
 if __name__ == "__main__":
-    print("JioSaavn only bot started...")
+    print("Bot is starting...")
     app.run()
