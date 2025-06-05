@@ -71,7 +71,7 @@ async def handle_message(client, message: Message):
         f"👤 {data['artist']}\n"
         f"🔗 [Stream/Download]({data['media_url']})"
     )
-    await msg.edit_text(reply, parse_mode="MarkdownV2", disable_web_page_preview=True)
+    await msg.edit_text(reply, parse_mode="html", disable_web_page_preview=True)
 
 if __name__ == "__main__":
     print("Bot is running...")
