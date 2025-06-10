@@ -2,12 +2,13 @@ import os
 import aiohttp
 import asyncio
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineQuery, InlineQueryResultAudio
+from pyrogram.types import Message
 from concurrent.futures import ThreadPoolExecutor
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
 from time import time
 import yt_dlp
+import requests  # Added for better JioSaavn API handling
 
 # Bot credentials
 API_ID = "12380656"
@@ -23,13 +24,19 @@ spotify = Spotify(auth_manager=SpotifyClientCredentials(
     client_id=SPOTIFY_CLIENT_ID,
     client_secret=SPOTIFY_CLIENT_SECRET))
 
-# JioSaavn API endpoint
-SAAVN_API = "https://saavn.dev/api/search/songs"
+# JioSaavn API endpoints
+SAAVN_SEARCH_API = "https://www.jiosaavn.com/api.php"
+SAAVN_SONG_API = "https://www.jiosaavn.com/api.php"
 
 # Setup Pyrogram client
-app = Client("music_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client(
+    "music_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    plugins=dict(root="plugins")  # This helps with TgCrypto warning
 
-executor = ThreadPoolExecutor(max_workers=2)
+executor = ThreadPoolExecutor(max_workers=4)  # Increased workers
 
 # Cache and stats
 cache = {}  # {url: filename}
@@ -49,25 +56,77 @@ ydl_opts = {
     'quiet': True,
     'no_warnings': True,
     'noplaylist': True,
+    'extract_flat': True,
 }
 
 async def search_saavn_songs(query):
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(SAAVN_API, params={"query": query, "limit": 1}) as resp:
+    params = {
+        '__call': 'search.getResults',
+        'p': 1,
+        'q': query,
+        'n': 1,
+        '_format': 'json',
+        'ctx': 'web6dot0'
+    }
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(SAAVN_SEARCH_API, params=params) as resp:
                 data = await resp.json()
-                if data.get('success'):
-                    song = data['data']['results'][0]
+                if data and 'results' in data and data['results']:
+                    song = data['results'][0]
                     return {
-                        'url': song['url'],
-                        'title': song['name'],
-                        'artist': ', '.join(song['primaryArtists'].split('~')),
-                        'duration': song['duration']
+                        'url': f"https://www.jiosaavn.com/song/{song.get('perma_url', '').split('/')[-1]}",
+                        'title': song.get('title', 'Unknown'),
+                        'artist': song.get('singers', 'Unknown'),
+                        'duration': int(song.get('duration', 0))
                     }
                 return None
-        except Exception as e:
-            print(f"JioSaavn search error: {e}")
-            return None
+    except Exception as e:
+        print(f"JioSaavn search error: {e}")
+        return None
+
+async def get_saavn_song(url):
+    song_id = url.split('/')[-1].split('?')[0]
+    params = {
+        '__call': 'song.getDetails',
+        'cc': 'in',
+        'p': 1,
+        '_format': 'json',
+        'mark': 1,
+        'ctx': 'web6dot0',
+        'network': '4g',
+        'network_subtype': 'unknown',
+        'network_type': 'unknown',
+        'api_version': '4',
+        '_marker': 0,
+        'token': song_id
+    }
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(SAAVN_SONG_API, params=params) as resp:
+                data = await resp.json()
+                if data and 'songs' in data and data['songs']:
+                    song = data['songs'][0]
+                    return {
+                        'title': song.get('song', 'Unknown'),
+                        'artist': song.get('primary_artists', 'Unknown'),
+                        'duration': int(song.get('duration', 0)),
+                        'download_url': song.get('media_url', '')
+                    }
+                return None
+    except Exception as e:
+        print(f"JioSaavn song fetch error: {e}")
+        return None
 
 def search_spotify_track(query):
     try:
@@ -90,7 +149,6 @@ async def download_from_url(url, is_spotify=False):
     loop = asyncio.get_event_loop()
     
     if is_spotify:
-        # For Spotify, we need to search JioSaavn first
         track_info = spotify.track(url.split('track/')[1].split('?')[0])
         query = f"{track_info['name']} {', '.join([a['name'] for a in track_info['artists']])}"
         song_info = await search_saavn_songs(query)
@@ -98,16 +156,33 @@ async def download_from_url(url, is_spotify=False):
             return None
         url = song_info['url']
     
-    def download():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            return ydl.extract_info(url, download=True)
+    # Check if it's a JioSaavn URL
+    if 'jiosaavn.com' in url:
+        song_info = await get_saavn_song(url)
+        if not song_info:
+            return None
+        
+        # Download the song directly from JioSaavn
+        def download():
+            try:
+                download_url = song_info['download_url'].replace('_96.mp4', '_320.mp4')
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    return ydl.extract_info(download_url, download=True)
+            except Exception as e:
+                print(f"Download error: {e}")
+                return None
+        
+        info = await loop.run_in_executor(executor, download)
+        if not info:
+            return None
+            
+        title = song_info['title']
+        artist = song_info['artist']
+        duration = song_info['duration']
+        filename = f"{title}.mp3"
+        return title, artist, duration, filename
     
-    info = await loop.run_in_executor(executor, download)
-    title = info.get('title', 'song')
-    artist = info.get('artist', 'Unknown')
-    duration = int(info.get('duration', 0))
-    filename = f"{title}.mp3"
-    return title, artist, duration, filename
+    return None
 
 async def process_and_send(chat_id, url, status_msg, is_spotify=False):
     if url in cache and os.path.exists(cache[url]):
@@ -130,11 +205,16 @@ async def process_and_send(chat_id, url, status_msg, is_spotify=False):
             await app.send_audio(
                 chat_id,
                 audio=filename,
-                title=title,
-                performer=artist,
+                title=title[:64],  # Telegram has title length limit
+                performer=artist[:64],
                 duration=duration,
             )
             await status_msg.delete()
+            # Clean up after sending
+            try:
+                os.remove(filename)
+            except:
+                pass
         else:
             await status_msg.edit_text("❌ Downloaded file not found.")
     except Exception as e:
@@ -160,14 +240,29 @@ async def start(client, message: Message):
 
 @app.on_message(filters.command("help"))
 async def help(client, message: Message):
-    await message.reply_text("Just send me:\n- A JioSaavn song link\n- A Spotify song link\n- Or search for a song")
+    help_text = """
+**How to use this bot:**
+- Send a JioSaavn song link
+- Send a Spotify song link
+- Or search for a song by name
+
+The bot will search JioSaavn for the song and send it to you.
+"""
+    await message.reply_text(help_text)
 
 @app.on_message(filters.command("stats"))
 async def show_stats(client, message: Message):
     uptime = int(time() - stats["start_time"])
-    await message.reply_text(
-        f"📊 Stats:\n👤 Users: {message.chat.id}\n🎶 Downloads: {stats['downloads']}\n⏱ Uptime: {uptime // 60} minutes"
-    )
+    hours, remainder = divmod(uptime, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    stats_text = f"""
+📊 **Bot Stats:**
+👤 Users: {message.chat.id}
+🎶 Total Downloads: {stats['downloads']}
+⏱ Uptime: {hours}h {minutes}m {seconds}s
+"""
+    await message.reply_text(stats_text)
 
 @app.on_message(filters.text & non_command_filter)
 async def handle_text(client, message: Message):
@@ -179,7 +274,7 @@ async def handle_text(client, message: Message):
     
     if "jiosaavn.com" in text or "saavn.com" in text:
         url = text
-    elif "spotify.com" in text:
+    elif "spotify.com" in text and "track" in text:
         is_spotify = True
         url = text
     else:
@@ -197,6 +292,13 @@ async def handle_text(client, message: Message):
         await handle_queue(chat_id)
     else:
         await status_msg.edit_text(f"⌛ In queue, position: {len(queues[chat_id])}")
+
+# Install TgCrypto if available
+try:
+    import TgCrypto
+    print("✅ TgCrypto found - running at full speed!")
+except ImportError:
+    print("ℹ️ TgCrypto not found - running at normal speed")
 
 if __name__ == "__main__":
     print("✅ Bot started...")
