@@ -7,7 +7,6 @@ from pyrogram.types import Message, InlineQuery, InlineQueryResultAudio
 from concurrent.futures import ThreadPoolExecutor
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
-from youtubesearchpython import VideosSearch
 from time import time
 
 # Bot credentials
@@ -78,10 +77,16 @@ def search_spotify_track(query):
         return None
 
 def search_youtube(query):
-    videos_search = VideosSearch(query, limit=1)
-    result = videos_search.result()
-    if result and result.get('result'):
-        return result['result'][0]['link']
+    ydl_search_opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': 'in_playlist',
+        'default_search': 'ytsearch1',
+    }
+    with yt_dlp.YoutubeDL(ydl_search_opts) as ydl:
+        info = ydl.extract_info(query, download=False)
+        if 'entries' in info and info['entries']:
+            return info['entries'][0]['url']
     return None
 
 async def download_song(url):
@@ -100,7 +105,7 @@ async def download_song(url):
 
 async def process_and_send(chat_id, url, status_msg):
     if url in cache and os.path.exists(cache[url]):
-        await status_msg.edit_text("📤 Uploading from cache...")
+        await status_msg.edit_text("\ud83d\udce4 Uploading from cache...")
         await app.send_audio(chat_id, audio=cache[url])
         await status_msg.delete()
         return
@@ -110,7 +115,7 @@ async def process_and_send(chat_id, url, status_msg):
         if os.path.exists(filename):
             cache[url] = filename
             stats["downloads"] += 1
-            await status_msg.edit_text("📤 Uploading...")
+            await status_msg.edit_text("\ud83d\udce4 Uploading...")
             await app.send_audio(
                 chat_id,
                 audio=filename,
@@ -120,9 +125,9 @@ async def process_and_send(chat_id, url, status_msg):
             )
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Downloaded file not found.")
+            await status_msg.edit_text("\u274c Downloaded file not found.")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Error: {str(e)}")
+        await status_msg.edit_text(f"\u274c Error: {str(e)}")
 
 async def handle_queue(chat_id):
     if chat_id not in queues or not queues[chat_id]:
@@ -140,24 +145,24 @@ non_command_filter = filters.create(is_not_command)
 
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
-    await message.reply_text("🎵 गाना भेजिए या JioSaavn/Spotify लिंक दीजिए।")
+    await message.reply_text("\ud83c\udfb5 \u0917\u093e\u0928\u093e \u092d\u0947\u091c\u093f\u090f \u092f\u093e JioSaavn/Spotify \u0932\u093f\u0902\u0915 \u0926\u0940\u091c\u093f\u090f\u0964")
 
 @app.on_message(filters.command("help"))
 async def help(client, message: Message):
-    await message.reply_text("इस बॉट से आप JioSaavn या Spotify गाने डाउनलोड कर सकते हैं।")
+    await message.reply_text("\u0907\u0938 \u092c\u0949\u091f \u0938\u0947 \u0906\u092a JioSaavn \u092f\u093e Spotify \u0917\u093e\u0928\u0947 \u0921\u093e\u0909\u0928\u0932\u094b\u0921 \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902\u0964")
 
 @app.on_message(filters.command("stats"))
 async def show_stats(client, message: Message):
     uptime = int(time() - stats["start_time"])
     await message.reply_text(
-        f"📊 Stats:\n👤 Users: {message.chat.id}\n🎶 Downloads: {stats['downloads']}\n⏱️ Uptime: {uptime // 60} minutes"
+        f"\ud83d\udcca Stats:\n\ud83d\udc64 Users: {message.chat.id}\n\ud83c\udfb6 Downloads: {stats['downloads']}\n\u23f1\ufe0f Uptime: {uptime // 60} minutes"
     )
 
 @app.on_message(filters.text & non_command_filter)
 async def handle_text(client, message: Message):
     text = message.text.strip()
     chat_id = message.chat.id
-    status_msg = await message.reply("🔍 Processing...")
+    status_msg = await message.reply("\ud83d\udd0d Processing...")
 
     if "jiosaavn.com" in text:
         url = text
@@ -168,14 +173,14 @@ async def handle_text(client, message: Message):
             query = f"{track_info['name']} {' '.join([a['name'] for a in track_info['artists']])}"
             url = search_youtube(query)
         except Exception:
-            await status_msg.edit_text("❌ Invalid Spotify track URL.")
+            await status_msg.edit_text("\u274c Invalid Spotify track URL.")
             return
     else:
         query = search_spotify_track(text) or text
         url = search_youtube(query)
 
     if not url:
-        await status_msg.edit_text("❌ कोई YouTube वीडियो नहीं मिला।")
+        await status_msg.edit_text("\u274c \u0915\u094b\u0908 YouTube \u0935\u0940\u0921\u093f\u092f\u094b \u0928\u0939\u0940\u0902 \u092e\u093f\u0932\u093e\u0964")
         return
 
     if chat_id not in queues:
@@ -184,7 +189,7 @@ async def handle_text(client, message: Message):
     if len(queues[chat_id]) == 1:
         await handle_queue(chat_id)
     else:
-        await status_msg.edit_text(f"⏳ कतार में है, स्थिति: {len(queues[chat_id])}")
+        await status_msg.edit_text(f"\u23f3 \u0915\u0924\u093e\u0930 \u092e\u0947\u0902 \u0939\u0948, \u0938\u094d\u0925\u093f\u0924\u093f: {len(queues[chat_id])}")
 
 @app.on_inline_query()
 async def inline_query_handler(client: Client, inline_query: InlineQuery):
@@ -195,18 +200,27 @@ async def inline_query_handler(client: Client, inline_query: InlineQuery):
         return
 
     try:
-        results = VideosSearch(query, limit=5).result().get("result", [])
+        ydl_search_opts = {
+            'quiet': True,
+            'skip_download': True,
+            'extract_flat': 'in_playlist',
+            'default_search': 'ytsearch5',
+        }
+        with yt_dlp.YoutubeDL(ydl_search_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            results = info.get("entries", [])
+
         answers = []
         for video in results:
-            title = video["title"]
-            link = video["link"]
-            channel = video["channel"]["name"]
+            title = video.get("title")
+            link = f"https://youtube.com/watch?v={video.get('id')}"
+            channel = video.get("uploader", "Unknown")
             answers.append(
                 InlineQueryResultAudio(
                     title=title,
                     performer=channel,
                     audio_url=link,
-                    caption=f"🎵 {title} — {channel}\n{link}",
+                    caption=f"\ud83c\udfb5 {title} — {channel}\n{link}",
                     input_message_content=None
                 )
             )
@@ -216,5 +230,5 @@ async def inline_query_handler(client: Client, inline_query: InlineQuery):
         await inline_query.answer([], cache_time=1)
 
 if __name__ == "__main__":
-    print("✅ बॉट चालू हो गया है...")
+    print("\u2705 \u092c\u0949\u091f \u091a\u093e\u0932\u0942 \u0939\u094b \u0917\u092f\u093e \u0939\u0948...")
     app.run()
