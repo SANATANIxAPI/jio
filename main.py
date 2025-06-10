@@ -35,6 +35,7 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     plugins=dict(root="plugins")  # This helps with TgCrypto warning
+)
 
 executor = ThreadPoolExecutor(max_workers=4)  # Increased workers
 
